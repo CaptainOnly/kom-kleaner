@@ -39,10 +39,10 @@ if response.status_code == 200:
 elif response.status_code == requests.codes.unauthorized:
     # Handle unauthorized...
 
-    #hons can reach this location
+    # hons can reach this location
     command = f"ping {param} 1 {hostname}"
     
-    # os.system returns the exit code: 0 usually means success
+    # os.system returns the exit code: 0 means success
     response = os.system(command)
     
     if response == 0:
