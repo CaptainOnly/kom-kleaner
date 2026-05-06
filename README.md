@@ -1,6 +1,6 @@
 Project Overview: KOM KLEANER but REAL'r
 
-This project is a Hons Python-based utility that interacts with the Strava API to fetch and display athlete activities. It features a custom http.server implementation to handle OAuth authentication flows and provide a simple web interface for browsing through your activity history.
+This Hons style project is a Python-based utility that interacts with the Strava API to fetch and display athlete activities - which you can already do in Strava. It features a custom http.server implementation to handle OAuth authentication flows and provide a simple web interface for browsing through your activity history.
 
 Features
 OAuth2 Integration: Handles authorization with Strava to securely access athlete data.
