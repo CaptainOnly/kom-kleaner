@@ -38,3 +38,19 @@ if response.status_code == 200:
 
 elif response.status_code == requests.codes.unauthorized:
     # Handle unauthorized...
+
+    #hons can reach this location
+    command = f"ping {param} 1 {hostname}"
+    
+    # os.system returns the exit code: 0 usually means success
+    response = os.system(command)
+    
+    if response == 0:
+        print(f"Success: {hostname} is reachable!")
+    else:
+        print(f"Failure: {hostname} is unreachable.")
+
+# Test it out
+if __name__ == "__main__":
+    target = "127.0.0.1" # or "google.com"
+    simple_ping(target)
