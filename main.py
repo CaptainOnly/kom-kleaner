@@ -78,7 +78,7 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
 
         response = requests.get(
             ATHLETE_URL + "/activities",
-            params={"per_page": 200, "page": page},
+            params={"per_page": 20, "page": page},
             headers={"Authorization": "Bearer {}".format(
                 self.server.access_token)})
 
@@ -86,7 +86,21 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-type", "text/html")
             self.end_headers()
-            self.wfile.write(f"<html>Got a page!</html>".encode("utf-8"))
+
+            html = "<html>\n"
+
+            html += "<h1>Page: {}</h1>\n".format(page)
+
+            for a in response.json():
+                html += "<p><a href=\"https://www.strava.com/activities/{}\">{}: {}</a></p>\n".format(
+                    a["id"], a["start_date"], a["name"])
+
+            html += "<p><a href=\"/activities?page={}\">Next Page...</a></p>\n".format(
+                int(page) + 1)
+
+            html += "</html>\n"
+
+            self.wfile.write(html.encode("utf-8"))
 
         elif response.status_code == requests.codes.unauthorized:
 
