@@ -12,6 +12,86 @@ ATHLETE_URL = "https://www.strava.com/api/v3/athlete"
 
 class KomHandler(http.server.BaseHTTPRequestHandler):
 
+    def handle_oauth(self, error, code):
+
+        if error or not code:
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(f"OAuth error: {error}".encode())
+            return
+
+        # Grab the auth code, perform the token swap, and redirect
+
+        response = requests.post(
+            TOKEN_URL,
+            data={"client_id": self.server.client_id,
+                  "client_secret": self.server.client_secret,
+                  "code": code,
+                  "grant_type": "authorization_code"})
+
+        if response.status_code == requests.codes.ok:
+            self.server.access_token  = response.json()["access_token"]
+            self.server.refresh_token = response.json()["refresh_token"]
+            self.server.save_credentials()
+
+            self.send_response(302)
+            self.send_header("Location", "/activities")
+            self.end_headers()
+
+        else:
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(f"OAuth failed: {response.status_code}, {response.text}".encode())
+
+    def do_oauth(self):
+
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
+        self.wfile.write("<html><a href=\"https://www.strava.com/oauth/authorize?client_id={}&response_type=code&redirect_uri=http://localhost:{}/oauth&approval_prompt=force&scope=activity:read_all,activity:write\">Click here</a></html>".format(self.server.client_id, self.server.server_port).encode("utf-8"))
+
+    def do_token_refresh(self, redirect_url):
+
+        print("Refreshing access token…")
+
+        response = requests.post(
+            TOKEN_URL,
+            data={"client_id": self.server.client_id,
+                  "client_secret": self.server.client_secret,
+                  "refresh_token": self.server.refresh_token,
+                  "grant_type": "refresh_token"})
+
+        if response.status_code == requests.codes.ok:
+            self.server.access_token  = response.json()["access_token"]
+            self.server.refresh_token = response.json()["refresh_token"]
+            self.server.save_credentials()
+
+            self.send_response(302)
+            self.send_header("Location", redirect_url)
+            self.end_headers()
+
+        else:
+            print("Refresh failed: {}, {}".format(response.status_code, response.json()))
+            sys.exit(1)
+
+    def handle_activites(self, page):
+
+        response = requests.get(
+            ATHLETE_URL + "/activities",
+            params={"per_page": 200, "page": page},
+            headers={"Authorization": "Bearer {}".format(
+                self.server.access_token)})
+
+        if response.status_code == requests.codes.ok:
+            self.send_response(200)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            self.wfile.write(f"<html>Got a page!</html>".encode("utf-8"))
+
+        elif response.status_code == requests.codes.unauthorized:
+
+            self.do_token_refresh(f"/activities?page={page}")
+
     def do_GET(self):
 
         parsed = urllib.parse.urlparse(self.path)
@@ -23,97 +103,22 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
         error  = params.get("error", [None])[0]
         page   = params.get("page",  [1])[0]
 
-        # Are we handling the OAuth authorization? Grab the code, perform the token swap, and redirect
-
         if parsed.path == "/oauth":
 
-            if error or not code:
-                self.send_response(400)
-                self.end_headers()
-                self.wfile.write(f"OAuth error: {error}".encode())
-                return
-
-            response = requests.post(
-                TOKEN_URL,
-                data={"client_id": self.server.client_id,
-                      "client_secret": self.server.client_secret,
-                      "code": code,
-                      "grant_type": "authorization_code"})
-
-            if response.status_code == requests.codes.ok:
-                self.server.access_token  = response.json()["access_token"]
-                self.server.refresh_token = response.json()["refresh_token"]
-                self.server.save_credentials()
-
-                self.send_response(302)
-                self.send_header("Location", "/activities")
-                self.end_headers()
-                return
-
-            else:
-                self.send_response(400)
-                self.end_headers()
-                self.wfile.write(f"OAuth failed: {response.status_code}, {response.text}".encode())
-                return
-
-        # Are we missing an access token? Present the OAuth link
+            return self.handle_oauth(error, code)
 
         if not self.server.access_token:
-            self.send_response(200)
-            self.send_header("Content-type", "text/html")
-            self.end_headers()
-            self.wfile.write("<html><a href=\"https://www.strava.com/oauth/authorize?client_id={}&response_type=code&redirect_uri=http://localhost:{}/oauth&approval_prompt=force&scope=activity:read_all,activity:write\">Click here</a></html>".format(self.server.client_id, self.server.server_port).encode("utf-8"))
-            return
 
-        # Are we loading a page?
+            return self.do_oauth()
 
         if parsed.path == "/activities":
 
-            response = requests.get(
-                ATHLETE_URL + "/activities",
-                params={"per_page": 200, "page": page},
-                headers={"Authorization": "Bearer {}".format(
-                    self.server.access_token)})
-
-            if response.status_code == requests.codes.ok:
-                self.send_response(200)
-                self.send_header("Content-type", "text/html")
-                self.end_headers()
-                self.wfile.write(f"<html>Got a page!</html>".encode("utf-8"))
-                return
-
-            if response.status_code == requests.codes.unauthorized:
-                print("Refreshing access token…")
-
-                response = requests.post(
-                    TOKEN_URL,
-                    data={"client_id": self.client_id,
-                          "client_secret": self.client_secret,
-                          "refresh_token": self.refresh_token,
-                          "grant_type": "refresh_token"})
-
-                if response.status_code == requests.codes.ok:
-                    self.server.access_token  = response.json()["access_token"]
-                    self.server.refresh_token = response.json()["refresh_token"]
-                    self.server.save_credentials()
-
-                    self.send_response(302)
-                    self.send_header("Location", f"/activities?page={page}")
-                    self.end_headers()
-                    return
-
-                else:
-                    print("Refresh failed: {}, {}".format(
-                        response.status_code, response.json()))
-                    sys.exit(1)
-
-        # Well, I'm out of ideas
+            return self.handle_activites(page)
 
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
         self.wfile.write(f"<html><a href=\"/activities\">Maybe you want this?</a></html>".encode("utf-8"))
-        return
 
 class KomServer(http.server.HTTPServer):
 
