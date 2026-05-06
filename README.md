@@ -23,7 +23,9 @@ Clone the repository:
 
 Bash
 git clone https://github.com/yourusername/KOM-KLEANER-REAL.git
+
 cd KOM-KLEANER-REAL
+
 Install dependencies:
 
 Bash
