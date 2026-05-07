@@ -1,66 +1,42 @@
-Project Overview: KOM KLEANER but REAL'r
+## KOM KLEANER v2 but REAL'r
 
-This Hons style project is a Python-based utility that interacts with the Strava API to fetch and display athlete activities - which you can already do in Strava. It features a custom http.server implementation to handle OAuth authentication flows and provide a simple web interface for browsing through your activity history.
+KOM Kleaner KV2 is a small local web app for browsing your Strava activities. It starts an HTTP server on your machine, walks you through Strava OAuth, stores the returned tokens in a local credentials JSON file, and renders paginated activity links in the browser.
 
-Features
-OAuth2 Integration: Handles authorization with Strava to securely access athlete data.
+The app uses Python 3.8+ and only the standard library.
 
-Activity Feed: Fetches a list of recent activities, including names, dates, and direct links to Strava.
+## Setup
 
-Pagination: Includes a built-in "Next Page" feature to navigate through large activity histories.
+1. Create a Strava app at https://www.strava.com/settings/api.
+2. Set the Strava app authorization callback domain to `localhost`.
+3. Create a credentials file:
+```json
+{
+  "client_id": "your-client-id",
+  "client_secret": "your-client-secret"
+}
+```
 
-Local Web Server: Uses a custom BaseHTTPRequestHandler to render data directly in your browser.
+Keep that file outside the repository or use a local ignored filename such as `strava_credentials.json`.
 
-Requirements
-Python 3.6+
+## Run
 
-Requests Library: To handle API calls.
+```bash
+python main.py --credentials-file strava_credentials.json
+```
 
-Strava API Credentials: You must register an application at the Strava Developers portal to get your Client ID and Client Secret.
+Then open http://127.0.0.1:8000/. The app will show a Strava authorization link if it does not already have an access token.
 
-Installation
-Clone the repository:
+By default, the app binds to `127.0.0.1`, uses port `8000`, and requests `activity:read,activity:read_all` because private activities require the broader read scope. You can override those values:
 
-Bash
-git clone https://github.com/yourusername/KOM-KLEANER-REAL.git
+```bash
+python main.py --credentials-file strava_credentials.json --port 8080 --scope activity:read
+```
 
-cd KOM-KLEANER-REAL
+If you change the port, make sure your Strava app can redirect to `http://localhost:<port>/oauth`.
 
-Install dependencies:
+## Development Checks
 
-Bash
-pip install requests
-Configuration
-Before running the script, ensure you have set up your environment variables or updated the main.py file with your Strava credentials:
-
-CLIENT_ID: Your Strava application ID.
-
-CLIENT_SECRET: Your Strava application secret.
-
-ATHLETE_URL: Typically [https://www.strava.com/api/v3/athlete](https://www.strava.com/api/v3/athlete).
-
-Usage
-Start the server:
-
-Bash
-python main.py
-Authenticate:
-Open your browser and navigate to the local server address (usually http://localhost:8000). You will be redirected to Strava to authorize the application.
-
-Browse Activities:
-Once authorized, the app will display a list of your activities. You can click on the activity names to view them on Strava or use the "Next Page..." link at the bottom to see older entries.
-
-Technical Details
-KomHandler Class
-A custom request handler that:
-
-Intercepts the /activities endpoint.
-
-Calculates the current page from the URL parameters.
-
-Performs a GET request to the Strava API using the stored access_token.
-
-Parses the JSON response and generates a dynamic HTML page.
-
-API Integration
-The app requests 200 activities per page (max allowed by Strava) to minimize API round-trips while maintaining a smooth user experience.
+```bash
+python -m py_compile main.py
+python -m unittest
+```
