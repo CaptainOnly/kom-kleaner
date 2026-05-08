@@ -8,6 +8,7 @@ The app uses Python 3.8+ and only the standard library.
 
 1. Create a Strava app at https://www.strava.com/settings/api.
 2. Set the Strava app authorization callback domain to `localhost`.
+   <img width="512" height="551" alt="image" src="https://github.com/user-attachments/assets/e18cfc3b-7f50-49f5-8e9c-1d1b653be89a" />
 3. Create a credentials file:
 ```json
 {
