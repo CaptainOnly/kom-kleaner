@@ -116,20 +116,16 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
 
         if response.status_code == requests.codes.ok:
 
-            html = "<html>\n"
-
-            html += "<h1>Page: {}</h1>\n".format(page)
+            self.wfile.write(f"<html>\n<h1>Page: {page}</h1>\n".encode())
 
             for a in response.json():
-                html += "<p><a href=\"https://www.strava.com/activities/{}\">{}: {}</a></p>\n".format(
-                    a["id"], a["start_date"], a["name"])
+                self.wfile.write(
+                    "<p><a href=\"https://www.strava.com/activities/{}\">{}: {}</a></p>\n".format(
+                        a["id"], a["start_date"], a["name"]).encode())
 
-            html += "<p><a href=\"/activities?page={}\">Next Page...</a></p>\n".format(
-                int(page) + 1)
-
-            html += "</html>\n"
-
-            self.wfile.write(html.encode())
+            self.wfile.write(
+                "<p><a href=\"/activities?page={}\">Next Page...</a></p>\n</html>\n".format(
+                    int(page) + 1).encode())
 
         else:
             self.wfile.write("<html>Activity fetch failed. See log.</html>")
