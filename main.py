@@ -4,15 +4,17 @@ import argparse
 import http.server
 import json
 import requests
+import secrets
 import sys
 import urllib.parse
 
+OAUTH_URL = "https://www.strava.com/oauth/authorize"
 TOKEN_URL = "https://www.strava.com/api/v3/oauth/token"
 ATHLETE_URL = "https://www.strava.com/api/v3/athlete"
 
 class KomHandler(http.server.BaseHTTPRequestHandler):
 
-    def handle_oauth(self, error, code):
+    def handle_oauth(self, error, code, state):
 
         if error or not code:
             self.send_response(400)
@@ -20,7 +22,13 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(f"OAuth error: {error}".encode())
             return
 
-        # Grab the auth code, perform the token swap, and redirect
+        if self.server.state != state:
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(f"OAuth state doesn't match".encode())
+            return
+
+        # Perform the token swap, redirect if it succeeds
 
         response = requests.post(
             TOKEN_URL,
@@ -45,10 +53,24 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
 
     def do_oauth(self):
 
+        self.server.state = secrets.token_hex(16)
+
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write("<html><a href=\"https://www.strava.com/oauth/authorize?client_id={}&response_type=code&redirect_uri=http://localhost:{}/oauth&approval_prompt=force&scope=activity:read_all,activity:write\">Click here</a></html>".format(self.server.client_id, self.server.server_port).encode("utf-8"))
+        self.wfile.write(
+            "<html><a href=\"{}"
+            "?client_id={}&response_type=code"
+            "&redirect_uri=http://localhost:{}/oauth"
+            "&approval_prompt=force"
+            "&scope=activity:read_all,activity:write"
+            "&state={}"
+            "\">Click here</a></html>"
+        .format(
+            OAUTH_URL,
+            self.server.client_id,
+            self.server.server_port,
+            self.server.state).encode())
 
     def do_token_refresh(self, redirect_url):
 
@@ -100,7 +122,7 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
 
             html += "</html>\n"
 
-            self.wfile.write(html.encode("utf-8"))
+            self.wfile.write(html.encode())
 
         elif response.status_code == requests.codes.unauthorized:
 
@@ -114,12 +136,13 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
 
         params = urllib.parse.parse_qs(parsed.query)
         code   = params.get("code",  [None])[0]
+        state  = params.get("state",  [None])[0]
         error  = params.get("error", [None])[0]
         page   = params.get("page",  [1])[0]
 
         if parsed.path == "/oauth":
 
-            return self.handle_oauth(error, code)
+            return self.handle_oauth(error, code, state)
 
         if not self.server.access_token:
 
@@ -132,7 +155,7 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-type", "text/html")
         self.end_headers()
-        self.wfile.write(f"<html><a href=\"/activities\">Maybe you want this?</a></html>".encode("utf-8"))
+        self.wfile.write(f"<html><a href=\"/activities\">Maybe you want this?</a></html>".encode())
 
 class KomServer(http.server.HTTPServer):
 
@@ -177,7 +200,7 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8000, help="port to listen on")
     args = parser.parse_args()
 
-    server = KomServer(('', args.port), args.credentials_file)
+    server = KomServer(("127.0.0.1", args.port), args.credentials_file)
     print(f"Listening on http://localhost:{args.port}/")
     try:
         server.serve_forever()
