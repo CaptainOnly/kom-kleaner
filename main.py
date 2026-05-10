@@ -6,6 +6,7 @@ import json
 import requests
 import secrets
 import sys
+import time
 import urllib.parse
 
 OAUTH_URL = "https://www.strava.com/oauth/authorize"
@@ -14,19 +15,21 @@ ATHLETE_URL = "https://www.strava.com/api/v3/athlete"
 
 class KomHandler(http.server.BaseHTTPRequestHandler):
 
-    def handle_oauth(self, error, code, state):
+    def do_oauth_swap(self, error, code, state):
 
         if error or not code:
             self.send_response(400)
+            self.send_header("Content-type", "text/html")
             self.end_headers()
-            self.wfile.write(f"OAuth error: {error}".encode())
-            return
+            self.wfile.write("<html>OAuth failed. See log.</html>".encode())
+            raise RuntimeError(f"Oath failed error: {error}, {code}")
 
         if self.server.state != state:
             self.send_response(400)
+            self.send_header("Content-type", "text/html")
             self.end_headers()
-            self.wfile.write(f"OAuth state doesn't match".encode())
-            return
+            self.wfile.write("<html>OAuth state doesn't match</html>".encode())
+            raise RuntimeError("Oath state doesn't match")
 
         # Perform the token swap, redirect if it succeeds
 
@@ -40,6 +43,7 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
         if response.status_code == requests.codes.ok:
             self.server.access_token  = response.json()["access_token"]
             self.server.refresh_token = response.json()["refresh_token"]
+            self.server.expires_at    = response.json()["expires_at"]
             self.server.save_credentials()
 
             self.send_response(302)
@@ -48,8 +52,10 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
 
         else:
             self.send_response(400)
+            self.send_header("Content-type", "text/html")
             self.end_headers()
-            self.wfile.write(f"OAuth failed: {response.status_code}, {response.text}".encode())
+            self.wfile.write("<html>Oauth swap failed. See log.</html>")
+            raise RuntimeError(f"Oath failed: {response.status_code}, {response.text}")
 
     def do_oauth(self):
 
@@ -72,7 +78,7 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
             self.server.server_port,
             self.server.state).encode())
 
-    def do_token_refresh(self, redirect_url):
+    def do_token_refresh(self):
 
         print("Refreshing access token…")
 
@@ -86,17 +92,21 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
         if response.status_code == requests.codes.ok:
             self.server.access_token  = response.json()["access_token"]
             self.server.refresh_token = response.json()["refresh_token"]
+            self.server.expires_at    = response.json()["expires_at"]
             self.server.save_credentials()
 
-            self.send_response(302)
-            self.send_header("Location", redirect_url)
-            self.end_headers()
-
         else:
-            print("Refresh failed: {}, {}".format(response.status_code, response.json()))
-            sys.exit(1)
+            self.send_response(400)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            self.wfile.write("<html>Token refresh failed. See log.</html>")
+            raise RuntimeError(f"token refresh failed: {response.status_code}, {response.text}")
 
-    def handle_activites(self, page):
+    def do_activites(self, page):
+
+        self.send_response(200)
+        self.send_header("Content-type", "text/html")
+        self.end_headers()
 
         response = requests.get(
             ATHLETE_URL + "/activities",
@@ -105,9 +115,6 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
                 self.server.access_token)})
 
         if response.status_code == requests.codes.ok:
-            self.send_response(200)
-            self.send_header("Content-type", "text/html")
-            self.end_headers()
 
             html = "<html>\n"
 
@@ -124,9 +131,9 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
 
             self.wfile.write(html.encode())
 
-        elif response.status_code == requests.codes.unauthorized:
-
-            self.do_token_refresh(f"/activities?page={page}")
+        else:
+            self.wfile.write("<html>Activity fetch failed. See log.</html>")
+            raise RuntimeError(f"Activity fetch failed: {response.status_code}, {response.text}")
 
     def do_GET(self):
 
@@ -142,15 +149,19 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
 
         if parsed.path == "/oauth":
 
-            return self.handle_oauth(error, code, state)
+            return self.do_oauth_swap(error, code, state)
 
         if not self.server.access_token:
 
             return self.do_oauth()
 
+        if not self.server.expires_at or time.time() > self.server.expires_at:
+
+            self.do_token_refresh()
+
         if parsed.path == "/activities":
 
-            return self.handle_activites(page)
+            return self.do_activites(page)
 
         self.send_response(200)
         self.send_header("Content-type", "text/html")
@@ -184,6 +195,7 @@ class KomServer(http.server.HTTPServer):
             self.client_secret = creds.get("client_secret", None)
             self.access_token  = creds.get("access_token", None)
             self.refresh_token = creds.get("refresh_token", None)
+            self.expires_at    = creds.get("expires_at", None)
 
     def save_credentials(self):
         with open(self.credentials_file, "w") as f:
@@ -191,7 +203,8 @@ class KomServer(http.server.HTTPServer):
                 {"client_id": self.client_id,
                  "client_secret": self.client_secret,
                  "access_token": self.access_token,
-                 "refresh_token": self.refresh_token}, f)
+                 "refresh_token": self.refresh_token,
+                 "expires_at": self.expires_at}, f)
 
 if __name__ == "__main__":
 
