@@ -133,9 +133,11 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(f"<html>\n<h1>Page: {page}</h1>\n".encode())
 
             for a in response.json():
-                self.wfile.write(
-                    "<p><a href=\"https://www.strava.com/activities/{}\">{}: {}</a></p>\n".format(
-                        a["id"], a["start_date"], a["name"]).encode())
+                self.wfile.write(f"<p><a href=\"https://www.strava.com/activities/{a['id']}\">".encode())
+                self.wfile.write(f"{a['start_date']}</a>".encode())
+                self.wfile.write(f": {a['name']}, {a['sport_type']}".encode())
+                self.wfile.write(f", {a['distance']}m, {a['elapsed_time']}s, {a['gear_id']}".encode())
+                self.wfile.write("</a></p>\n".encode())
 
             self.wfile.write(
                 "<p><a href=\"/activities?page={}\">Next Page...</a></p>\n</html>\n".format(
