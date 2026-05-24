@@ -147,6 +147,10 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
                 self.wfile.write(f": {a['name']}, {a['sport_type']}".encode())
                 self.wfile.write(f", {a['distance']}m, {a['elapsed_time']}s".encode())
                 self.wfile.write(", {}".format(ad.get("device_name", "Unknown")).encode())
+                if a['private']:
+                    self.wfile.write(", Private".encode())
+                else:
+                    self.wfile.write(", Public".encode())
                 self.wfile.write("</a></p>\n".encode())
 
             self.wfile.write(
