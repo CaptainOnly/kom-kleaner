@@ -12,6 +12,7 @@ import urllib.parse
 OAUTH_URL = "https://www.strava.com/oauth/authorize"
 TOKEN_URL = "https://www.strava.com/api/v3/oauth/token"
 ATHLETE_URL = "https://www.strava.com/api/v3/athlete"
+ACTIVITIES_URL = "https://www.strava.com/api/v3/activities"
 
 
 class KomHandler(http.server.BaseHTTPRequestHandler):
@@ -122,21 +123,30 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-type", "text/html")
         self.end_headers()
 
-        response = requests.get(
+        a_response = requests.get(
             ATHLETE_URL + "/activities",
             params={"per_page": 20, "page": page},
             headers={"Authorization": "Bearer {}".format(
                 self.server.access_token)})
 
-        if response.status_code == requests.codes.ok:
+        if a_response.status_code == requests.codes.ok:
 
             self.wfile.write(f"<html>\n<h1>Page: {page}</h1>\n".encode())
 
-            for a in response.json():
+            for a in a_response.json():
+
+                ad_response = requests.get(
+                    f"{ACTIVITIES_URL}/{a['id']}",
+                    headers={"Authorization": "Bearer {}".format(
+                        self.server.access_token)})
+
+                ad = ad_response.json()
+
                 self.wfile.write(f"<p><a href=\"https://www.strava.com/activities/{a['id']}\">".encode())
                 self.wfile.write(f"{a['start_date']}</a>".encode())
                 self.wfile.write(f": {a['name']}, {a['sport_type']}".encode())
-                self.wfile.write(f", {a['distance']}m, {a['elapsed_time']}s, {a['gear_id']}".encode())
+                self.wfile.write(f", {a['distance']}m, {a['elapsed_time']}s".encode())
+                self.wfile.write(", {}".format(ad.get("device_name", "Unknown")).encode())
                 self.wfile.write("</a></p>\n".encode())
 
             self.wfile.write(
@@ -145,7 +155,7 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
 
         else:
             self.wfile.write("<html>Activity fetch failed. See log.</html>")
-            raise RuntimeError(f"Activity fetch failed: {response.status_code}, {response.text}")
+            raise RuntimeError(f"Activity fetch failed: {a_response.status_code}, {a_response.text}")
 
     def do_GET(self):
 
