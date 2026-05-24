@@ -13,6 +13,7 @@ OAUTH_URL = "https://www.strava.com/oauth/authorize"
 TOKEN_URL = "https://www.strava.com/api/v3/oauth/token"
 ATHLETE_URL = "https://www.strava.com/api/v3/athlete"
 
+
 class KomHandler(http.server.BaseHTTPRequestHandler):
 
     def do_oauth_swap(self, error, code, state):
@@ -24,12 +25,17 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write("<html>OAuth failed. See log.</html>".encode())
             raise RuntimeError(f"Oath failed error: {error}, {code}")
 
+        # Check the state variable and discard so we don't reuse state
+        # for later OAuth requests
+
         if self.server.state != state:
             self.send_response(400)
             self.send_header("Content-type", "text/html")
             self.end_headers()
             self.wfile.write("<html>OAuth state doesn't match</html>".encode())
             raise RuntimeError("Oath state doesn't match")
+
+        self.server.state = None
 
         # Perform the token swap, redirect if it succeeds
 
@@ -59,7 +65,15 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
 
     def do_oauth(self):
 
-        self.server.state = secrets.token_hex(16)
+        # Update server state if necessary
+
+        if not self.server.state:
+
+            self.server.state = secrets.token_hex(16)
+
+            print(f"OAuth State: {self.server.state}")
+
+        # Provide the OAuth link
 
         self.send_response(200)
         self.send_header("Content-type", "text/html")
@@ -72,11 +86,11 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
             "&scope=activity:read_all,activity:write"
             "&state={}"
             "\">Click here</a></html>"
-        .format(
-            OAUTH_URL,
-            self.server.client_id,
-            self.server.server_port,
-            self.server.state).encode())
+            .format(
+                OAUTH_URL,
+                self.server.client_id,
+                self.server.server_port,
+                self.server.state).encode())
 
     def do_token_refresh(self):
 
@@ -135,17 +149,23 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
 
         parsed = urllib.parse.urlparse(self.path)
 
-        print("Serving {}, with params {}".format(parsed.path, parsed.query))
-
         params = urllib.parse.parse_qs(parsed.query)
-        code   = params.get("code",  [None])[0]
-        state  = params.get("state",  [None])[0]
-        error  = params.get("error", [None])[0]
-        page   = params.get("page",  [1])[0]
+        code  = params.get("code",  [None])[0]
+        state = params.get("state",  [None])[0]
+        error = params.get("error", [None])[0]
+        page  = params.get("page",  [1])[0]
 
         if parsed.path == "/oauth":
 
             return self.do_oauth_swap(error, code, state)
+
+        if self.path.startswith("/favicon.ico"):
+
+            self.send_response(204) # No Content
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+            return None
 
         if not self.server.access_token:
 
@@ -179,6 +199,8 @@ class KomServer(http.server.HTTPServer):
         if not self.client_secret:
             raise RuntimeError("Need a client secret")
 
+        self.state = None
+
     def load_credentials(self):
         with open(self.credentials_file, "r") as f:
             try:
@@ -201,6 +223,7 @@ class KomServer(http.server.HTTPServer):
                  "access_token": self.access_token,
                  "refresh_token": self.refresh_token,
                  "expires_at": self.expires_at}, f)
+
 
 if __name__ == "__main__":
 
