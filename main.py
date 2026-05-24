@@ -15,6 +15,20 @@ ATHLETE_URL = "https://www.strava.com/api/v3/athlete"
 ACTIVITIES_URL = "https://www.strava.com/api/v3/activities"
 
 
+def latlng_to_map_link(latlng, label="View on map"):
+    """
+    latlng: [lat, lng] as returned by Strava (e.g. [39.7392, -104.9903])
+    label: link text for the HTML anchor
+    """
+    if not latlng or len(latlng) != 2:
+        return "..."
+
+    lat, lng = latlng
+    # Google Maps link; you could swap this for OpenStreetMap if you prefer
+    url = f"https://www.google.com/maps?q={lat},{lng}"
+    return f'<a href="{url}" target="_blank" rel="noopener noreferrer">{label}</a>'
+
+
 class KomHandler(http.server.BaseHTTPRequestHandler):
 
     def do_oauth_swap(self, error, code, state):
@@ -155,7 +169,9 @@ class KomHandler(http.server.BaseHTTPRequestHandler):
                 if a['private']:
                     self.wfile.write(", Private".encode())
                 else:
-                    self.wfile.write(", Public".encode())
+                    self.wfile.write(", ...".encode())
+                self.wfile.write((", " + latlng_to_map_link(a.get("start_latlng", None), "Start")).encode())
+                self.wfile.write((", " + latlng_to_map_link(a.get("end_latlng", None), "End")).encode())
                 self.wfile.write("</a></p>\n".encode())
 
             self.wfile.write(
