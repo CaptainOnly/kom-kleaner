@@ -1,6 +1,6 @@
 # Overview
 
-A standard-library-only web-app for interacting with the Strava API. Mostly a vehcicle for a certain someone to learn Python.
+A web-app for interacting with the Strava API. Mostly a vehcicle for a certain someone to learn Python.
 
 # Setup
 
@@ -11,7 +11,7 @@ Make the app URL localhost. App will have client ID and secret.
 It should contain: {"client_id": "...", "client_secret": "..."}
 
 ## Start the app
-python3 main.py --credentials_file <credentials file path>
+python main.py --credentials_file <credentials file path>
 
 ## Visit the URL printed
 http://localhost:8000/
