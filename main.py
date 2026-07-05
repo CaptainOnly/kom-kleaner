@@ -5,6 +5,7 @@ import argparse
 import asyncio
 import httpx
 import json
+import os
 import secrets
 import time
 import types
@@ -14,14 +15,15 @@ TOKEN_URL = "https://www.strava.com/api/v3/oauth/token"
 ATHLETE_URL = "https://www.strava.com/api/v3/athlete"
 ACTIVITIES_URL = "https://www.strava.com/api/v3/activities"
 
-creds = None
+creds = types.SimpleNamespace(client_id=None, client_secret=None)
 creds_file = None
+
+activities = {}
+activities_file = None
+activities_done = None
 
 server_state = None
 server_port = None
-
-activities = None
-activities_done = None
 
 
 def save_credentials():
@@ -29,9 +31,14 @@ def save_credentials():
         json.dump(
             {"client_id": creds.client_id,
              "client_secret": creds.client_secret,
-             "access_token": creds.access_token,
-             "refresh_token": creds.refresh_token,
-             "expires_at": creds.expires_at}, f)
+             "access_token": getattr(creds, "access_token", None),
+             "refresh_token": getattr(creds, "refresh_token", None),
+             "expires_at": getattr(creds, "expires_at", None)}, f, indent=4)
+
+
+def save_activities():
+    with open(activities_file, "w") as f:
+        json.dump(activities, f, indent=4)
 
 
 def latlng_to_map_link(latlng, label="View on map"):
@@ -53,12 +60,11 @@ async def activities_fetch():
     global activities
     global activities_done
 
-    activities = []
     activities_done = False
 
     print("Start fetching activities...")
 
-    timeout = httpx.Timeout(30.0, read=60.0) # long read timeout for those old activities
+    timeout = httpx.Timeout(30.0, read=60.0) # long read timeout required, esp. for old activities
 
     per_page = 200 # Strava API max, minimizes requests
     page = 0
@@ -78,14 +84,32 @@ async def activities_fetch():
 
                 items = response.json()
 
-                if not items:
-                    print("Done fetching activities.")
+                if page == 1 and max(activities.keys()) == items[0]["id"]:
+                    print("Cached activities appear up to date.")
                     activities_done = True
                     break
 
-                else:
-                    print(f"Page {page} fetched with {len(items)}.")
-                    activities.extend(items)
+                if not items:
+                    print("Done fetching activities.")
+                    activities_done = True
+                    save_activities()
+                    break
+
+                print(f"Page {page} fetched with {len(items)}.")
+
+                for item in items:
+
+                    if item["id"] in activities:
+
+                        activity = activities.get(item["id"])
+
+                        if any(activity.get(k) != v for k, v in item.items()):
+                            print(f"Updated activity found: {item['id']}")
+                            activity.update(item)
+
+                    else:
+                        print(f"New activity found: {item['id']}")
+                        activities[item["id"]] = item
 
             else:
                 print(f"Fetch status_code: {response.status_code}, text: {response.text}")
@@ -219,7 +243,7 @@ async def main_handler(request):
             content_type="text/html",
             text="<html>OAuth token refresh failed. See log.</html>")
 
-    if activities is None:
+    if activities_done is None:
         asyncio.create_task(activities_fetch())
 
     resp = aiohttp.web.StreamResponse(
@@ -231,24 +255,23 @@ async def main_handler(request):
     await resp.prepare(request)
     await resp.write(b"<html><body>")
 
-    if activities:
-        await resp.write(f"<p>Fetched activities: {len(activities)}, (finished: {activities_done})</p>".encode("utf-8"))
-
-        for a in activities:
-            await resp.write(f"""
-            <p><a href=\"https://www.strava.com/activities/{a['id']}\">{a['start_date']}</a>
-            : {a['name']}
-            , {a['sport_type']}
-            , {a['distance']}m
-            , {a['elapsed_time']}s
-            {", Commute" if a.get('commute', False) else ", ..."}
-            {", Private" if a['private'] else ", ..."}
-            , {latlng_to_map_link(a.get("start_latlng", None), "Start")}
-            , {latlng_to_map_link(a.get("end_latlng", None), "End")}
-            </p>\n""".encode())
-
+    if activities_done:
+        await resp.write("<p>Up to date</p>".encode("utf-8"))
     else:
-        await resp.write("<p>Fetching started</p>".encode("utf-8"))
+        await resp.write("<p>Updating...</p>".encode("utf-8"))
+
+    for a in activities.values():
+        await resp.write(f"""
+        <p><a href=\"https://www.strava.com/activities/{a['id']}\">{a['start_date']}</a>
+        : {a['name']}
+        , {a['sport_type']}
+        , {a['distance']}m
+        , {a['elapsed_time']}s
+        {", Commute" if a.get('commute', False) else ", ..."}
+        {", Private" if a['private'] else ", ..."}
+        , {latlng_to_map_link(a.get("start_latlng", None), "Start")}
+        , {latlng_to_map_link(a.get("end_latlng", None), "End")}
+        </p>\n""".encode())
 
     await resp.write(b"</body></html>")
     await resp.write_eof()
@@ -259,18 +282,25 @@ async def main_handler(request):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="kom-kleaner")
     parser.add_argument("--credentials_file", required=True, help="path to credentials file")
+    parser.add_argument("--activities_file", required=True, help="path to activities file")
     parser.add_argument("--port", type=int, default=8000, help="port to listen on")
     args = parser.parse_args()
 
     server_port = args.port
     creds_file = args.credentials_file
+    activities_file = args.activities_file
 
-    with open(creds_file, "r") as f:
-        try:
-            creds = types.SimpleNamespace(**json.load(f))
+    # Load credentials
 
-        except json.decoder.JSONDecodeError:
-            raise RuntimeError("Credentials file is corrupt")
+    if not os.path.exists(creds_file):
+        save_credentials()
+    else:
+        with open(creds_file, "r") as f:
+            try:
+                creds = types.SimpleNamespace(**json.load(f))
+
+            except json.decoder.JSONDecodeError:
+                raise RuntimeError("Credentials file is corrupt")
 
     if not creds.client_id:
         raise RuntimeError("Need a client ID")
@@ -278,6 +308,24 @@ if __name__ == "__main__":
         raise RuntimeError("Need a client secret")
     if not hasattr(creds, "access_token"):
         creds.access_token = None
+
+    # Load activities file
+
+    if not os.path.exists(activities_file):
+        save_activities()
+    else:
+        with open(activities_file, "r") as f:
+            try:
+                activities = json.load(f)
+
+            except json.decoder.JSONDecodeError:
+                raise RuntimeError("Activities file is corrupt")
+
+        # normalize the keys back to integers for use with Strava API
+
+        activities = {int(k): v for k, v in activities.items()}
+
+    # Start web interface
 
     app = aiohttp.web.Application()
     app.router.add_route("*", "/{tail:.*}", main_handler)
