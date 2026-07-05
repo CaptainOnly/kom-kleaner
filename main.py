@@ -55,21 +55,21 @@ def latlng_to_map_link(latlng, label="View on map"):
     return f'<a href="{url}" target="_blank" rel="noopener noreferrer">{label}</a>'
 
 
-async def activities_fetch():
+async def activities_fetch(refresh=False):
+
+    timeout = httpx.Timeout(30.0, read=60.0) # long read timeout required, esp. for old activities
+    per_page = 200 # Strava API max, minimizes requests
 
     global activities
     global activities_done
 
-    activities_done = False
-
-    print("Start fetching activities...")
-
-    timeout = httpx.Timeout(30.0, read=60.0) # long read timeout required, esp. for old activities
-
-    per_page = 200 # Strava API max, minimizes requests
-    page = 0
-
     async with httpx.AsyncClient(timeout=timeout) as client:
+
+        print("Start fetching activities...")
+
+        activities_done = False
+
+        page = 0
 
         while True:
 
@@ -84,14 +84,12 @@ async def activities_fetch():
 
                 items = response.json()
 
-                if page == 1 and max(activities.keys()) == items[0]["id"]:
+                if not refresh and page == 1 and max(activities.keys()) == items[0]["id"]:
                     print("Cached activities appear up to date.")
-                    activities_done = True
                     break
 
                 if not items:
-                    print("Done fetching activities.")
-                    activities_done = True
+                    print("Finished with activity summaries...")
                     save_activities()
                     break
 
@@ -113,7 +111,32 @@ async def activities_fetch():
 
             else:
                 print(f"Fetch status_code: {response.status_code}, text: {response.text}")
-                break
+                return
+
+        # Fetch details for activities without any
+
+        for aid, activity in activities.items():
+
+            if refresh or "details" not in activity:
+
+                print(f"fetching details for {aid}...")
+
+                response = await client.get(
+                    f"{ACTIVITIES_URL}/{aid}",
+                    headers={"Authorization": f"Bearer {creds.access_token}"})
+
+                if response.status_code == httpx.codes.ok:
+                    activity["details"] = response.json()
+
+                else:
+                    print(f"Fetch status_code: {response.status_code}, text: {response.text}")
+                    return
+
+        # Finish up and save
+
+        print("Done fetching activities.")
+        activities_done = True
+        save_activities()
 
 
 def do_oauth():
@@ -260,13 +283,17 @@ async def main_handler(request):
     else:
         await resp.write("<p>Updating...</p>".encode("utf-8"))
 
-    for a in activities.values():
+    for k,a in activities.items():
+
+        device_name = a['details'].get('device_name', "Missing") if 'details' in a else "Unknown"
+
         await resp.write(f"""
         <p><a href=\"https://www.strava.com/activities/{a['id']}\">{a['start_date']}</a>
         : {a['name']}
         , {a['sport_type']}
         , {a['distance']}m
         , {a['elapsed_time']}s
+        , {device_name}
         {", Commute" if a.get('commute', False) else ", ..."}
         {", Private" if a['private'] else ", ..."}
         , {latlng_to_map_link(a.get("start_latlng", None), "Start")}
