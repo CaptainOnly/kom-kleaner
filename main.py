@@ -3,6 +3,7 @@
 import aiohttp.web
 import argparse
 import asyncio
+import datetime
 import httpx
 import json
 import os
@@ -55,6 +56,48 @@ def latlng_to_map_link(latlng, label="View on map"):
     return f'<a href="{url}" target="_blank" rel="noopener noreferrer">{label}</a>'
 
 
+async def wait_for_rate_limit(limit, usage):
+
+    limit = limit.split(',')
+    usage = usage.split(',')
+
+    if usage[0] == limit[0]:
+
+        print("15 minute rate limit hit")
+
+        def next_15(now):
+            if now.minute < 15:
+                return now.replace(minute=15, second=1)
+            if now.minute < 30:
+                return now.replace(minute=30, second=1)
+            if now.minute < 45:
+                return now.replace(minute=45, second=1)
+            if now.hour < 23:
+                return now.replace(hour=now.hour + 1, minute=0, second=1)
+            return now.replace(day=now.day + 1, hour=0, minute=0, second=1)
+
+        now = datetime.datetime.now()
+        remaining = next_15(now).timestamp() - now.timestamp()
+
+        print(f"Resume in {remaining} seconds")
+
+        await asyncio.sleep(remaining)
+
+    if usage[1] == limit[1]:
+
+        print("Daily rate limit hit")
+
+        def next_day(now):
+            return (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=1)
+
+        now = datetime.datetime.now(datetime.UTC)
+        remaining = next_day(now).timestamp() - now.timestamp()
+
+        print(f"Resume in {remaining} seconds")
+
+        await asyncio.sleep(remaining)
+
+
 async def activities_fetch(refresh=False):
 
     timeout = httpx.Timeout(30.0, read=60.0) # long read timeout required, esp. for old activities
@@ -69,11 +112,9 @@ async def activities_fetch(refresh=False):
 
         activities_done = False
 
-        page = 0
+        page = 1 # Strava API starts with page 1
 
         while True:
-
-            page += 1 # Strava API starts with page 1
 
             headers = {"Authorization": f"Bearer {creds.access_token}"}
 
@@ -99,7 +140,7 @@ async def activities_fetch(refresh=False):
                     save_activities()
                     break
 
-                print(f"Page {page} fetched with {len(items)}.")
+                print(f"Page {page} fetched with {len(items)} activities.")
 
                 local_activity = False
 
@@ -125,9 +166,27 @@ async def activities_fetch(refresh=False):
                     save_activities()
                     break
 
+                page += 1
+
+            elif httpx.codes.too_many_requests:
+
+                activities_done = "Limited"
+
+                save_activities()
+
+                await wait_for_rate_limit(
+                    response.headers.get("X-RateLimit-Limit"),
+                    response.headers.get("X-RateLimit-Usage"))
+
+                activities_done = False
+
             else:
                 print(f"Fetch status_code: {response.status_code}, text: {response.text}")
-                # we need to indicate the status as "incomplete" with the error, report in UI, and provide a way to refresh
+
+                activities_done = "Error"
+
+                save_activities()
+
                 return
 
         # Fetch details for activities using ETag to avoid refreshing up to date data
@@ -136,7 +195,7 @@ async def activities_fetch(refresh=False):
 
             if refresh or "details" not in activity:
 
-                print(f"fetching details for {aid}...")
+                print(f"Fetching details for {aid}...")
 
                 headers = {"Authorization": f"Bearer {creds.access_token}"}
 
@@ -154,14 +213,33 @@ async def activities_fetch(refresh=False):
                     activity["ETag"] = response.headers.get("ETag")
                     activity["details"] = response.json()
 
+                elif httpx.codes.too_many_requests:
+
+                    activities_done = "Limited"
+
+                    save_activities()
+
+                    await wait_for_rate_limit(
+                        response.headers.get("X-RateLimit-Limit"),
+                        response.headers.get("X-RateLimit-Usage"))
+
+                    activities_done = False
+
                 else:
                     print(f"Fetch status_code: {response.status_code}, text: {response.text}")
-                    break
+
+                    activities_done = "Error"
+
+                    save_activities()
+
+                    return
 
         # Finish up and save
 
         print("Done fetching activities.")
+
         activities_done = True
+
         save_activities()
 
 
@@ -292,8 +370,12 @@ async def main_handler(request):
             content_type="text/html",
             text="<html>OAuth token refresh failed. See log.</html>")
 
+    # We have a token, kick off a fetch if one hasn't already started
+
     if activities_done is None:
         asyncio.create_task(activities_fetch())
+
+    # List the activities we have as the response
 
     resp = aiohttp.web.StreamResponse(
         status=200,
@@ -304,7 +386,11 @@ async def main_handler(request):
     await resp.prepare(request)
     await resp.write(b"<html><body>")
 
-    if activities_done:
+    if activities_done == "Limited":
+        await resp.write("<p>Rate limited...</p>".encode("utf-8"))
+    elif activities_done == "Error":
+        await resp.write("<p>Error during update. Consult log.</p>".encode("utf-8"))
+    elif activities_done:
         await resp.write("<p>Up to date</p>".encode("utf-8"))
     else:
         await resp.write("<p>Updating...</p>".encode("utf-8"))
@@ -387,9 +473,28 @@ if __name__ == "__main__":
             except json.decoder.JSONDecodeError:
                 raise RuntimeError("Activities file is corrupt")
 
-    # Start web interface
+    # Create the web app
 
     app = aiohttp.web.Application()
     app.router.add_route("*", "/{tail:.*}", main_handler)
+
+    # If we have a valid token, have web app spawn a task to fetch
+    # activities on startup.
+    #
+    # The on_startup() method takes an async coroutine which will be
+    # awaited after the event loop for the app is created and before
+    # the app starts listening for web requests. The coroutine must
+    # finish for the app to continue so we can't simply append
+    # activities_fetch, instead we create a task for it.
+
+    async def _start_fetching(app):
+        asyncio.create_task(activities_fetch())
+
+    if creds.access_token and creds.expires_at and time.time() < creds.expires_at:
+        app.on_startup.append(_start_fetching)
+    else:
+        print("Waiting for valid token to fetch activities.")
+
+    # Start the web app
 
     aiohttp.web.run_app(app, port=server_port)
