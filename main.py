@@ -75,29 +75,39 @@ async def activities_fetch(refresh=False):
 
             page += 1 # Strava API starts with page 1
 
+            headers = {"Authorization": f"Bearer {creds.access_token}"}
+
+            if "ETag" in activities:
+                headers["If-None-Match"] = activities["ETag"]
+
             response = await client.get(
                 ATHLETE_URL + "/activities",
                 params={"per_page": per_page, "page": page},
-                headers={"Authorization": f"Bearer {creds.access_token}"})
+                headers=headers)
 
-            if response.status_code == httpx.codes.ok:
+            if response.status_code == httpx.codes.not_modified:
+                print("No new activities.")
+                break
+
+            elif response.status_code == httpx.codes.ok:
 
                 items = response.json()
 
-                if not refresh and page == 1 and max(activities.keys()) == items[0]["id"]:
-                    print("Cached activities appear up to date.")
-                    break
-
                 if not items:
-                    print("Finished with activity summaries...")
+                    print("Finished fetching activity summaries.")
+                    activities["ETag"] = response.headers.get("ETag")
                     save_activities()
                     break
 
                 print(f"Page {page} fetched with {len(items)}.")
 
+                local_activity = False
+
                 for item in items:
 
                     if item["id"] in activities:
+
+                        local_activity = True
 
                         activity = activities.get(item["id"])
 
@@ -109,11 +119,18 @@ async def activities_fetch(refresh=False):
                         print(f"New activity found: {item['id']}")
                         activities[item["id"]] = item
 
+                if not refresh and local_activity:
+                    print("Not refreshing, so stopping at previously saved activities.")
+                    activities["ETag"] = response.headers.get("ETag")
+                    save_activities()
+                    break
+
             else:
                 print(f"Fetch status_code: {response.status_code}, text: {response.text}")
+                # we need to indicate the status as "incomplete" with the error, report in UI, and provide a way to refresh
                 return
 
-        # Fetch details for activities without any
+        # Fetch details for activities using ETag to avoid refreshing up to date data
 
         for aid, activity in activities.items():
 
@@ -121,16 +138,25 @@ async def activities_fetch(refresh=False):
 
                 print(f"fetching details for {aid}...")
 
+                headers = {"Authorization": f"Bearer {creds.access_token}"}
+
+                if "ETag" in activity:
+                    headers["If-None-Match"] = activity["ETag"]
+
                 response = await client.get(
                     f"{ACTIVITIES_URL}/{aid}",
-                    headers={"Authorization": f"Bearer {creds.access_token}"})
+                    headers=headers)
 
-                if response.status_code == httpx.codes.ok:
+                if response.status_code == httpx.codes.not_modified:
+                    pass
+
+                elif response.status_code == httpx.codes.ok:
+                    activity["ETag"] = response.headers.get("ETag")
                     activity["details"] = response.json()
 
                 else:
                     print(f"Fetch status_code: {response.status_code}, text: {response.text}")
-                    return
+                    break
 
         # Finish up and save
 
@@ -285,6 +311,9 @@ async def main_handler(request):
 
     for k,a in activities.items():
 
+        if k == "ETag":
+            continue
+
         device_name = a['details'].get('device_name', "Missing") if 'details' in a else "Unknown"
 
         await resp.write(f"""
@@ -343,14 +372,20 @@ if __name__ == "__main__":
     else:
         with open(activities_file, "r") as f:
             try:
-                activities = json.load(f)
+                file_activities = json.load(f)
+
+                # normalize the keys back to integers for use with Strava API
+
+                for k,v in file_activities.items():
+                    if k == "etag":
+                        activities["ETag"] = v
+                    elif k == "ETag":
+                        activities["ETag"] = v
+                    else:
+                        activities[int(k)] = v
 
             except json.decoder.JSONDecodeError:
                 raise RuntimeError("Activities file is corrupt")
-
-        # normalize the keys back to integers for use with Strava API
-
-        activities = {int(k): v for k, v in activities.items()}
 
     # Start web interface
 
