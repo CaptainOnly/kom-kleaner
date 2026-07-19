@@ -122,6 +122,14 @@ async def activities_fetch(refresh=False):
 
         while True:
 
+            ensure_token_is_fresh()
+
+            if not creds.access_token:
+                print("Token refresh failed")
+                activities_done = "Error"
+                save_activities()
+                return
+
             headers = {"Authorization": f"Bearer {creds.access_token}"}
 
             if "ETag" in activities:
@@ -195,11 +203,8 @@ async def activities_fetch(refresh=False):
 
             else:
                 print(f"Fetch status_code: {response.status_code}, text: {response.text}")
-
                 activities_done = "Error"
-
                 save_activities()
-
                 return
 
         # Fetch details for activities using ETag to avoid refreshing up to date data
@@ -213,6 +218,14 @@ async def activities_fetch(refresh=False):
             activity = activities[key]
 
             if refresh or "details" not in activity:
+
+                ensure_token_is_fresh()
+
+                if not creds.access_token:
+                    print("Token refresh failed")
+                    activities_done = "Error"
+                    save_activities()
+                    return
 
                 print(f"Fetching details for {aid}...")
 
@@ -255,11 +268,8 @@ async def activities_fetch(refresh=False):
 
                 else:
                     print(f"Fetch status_code: {response.status_code}, text: {response.text}")
-
                     activities_done = "Error"
-
                     save_activities()
-
                     return
 
         # Finish up and save
@@ -347,9 +357,14 @@ def do_oauth_swap(error, code, state):
             text="<html>Oauth swap failed. See log.</html>")
 
 
-def do_token_refresh():
+def ensure_token_is_fresh():
 
     global creds
+
+    if creds.expires_at and time.time() < creds.expires_at:
+        return
+
+    print("Refreshing access token…")
 
     response = httpx.post(
         TOKEN_URL,
@@ -388,9 +403,7 @@ async def main_handler(request):
     if not creds.access_token:
         return do_oauth()
 
-    if not creds.expires_at or time.time() > creds.expires_at:
-        print("Refreshing access token…")
-        do_token_refresh()
+    ensure_token_is_fresh()
 
     if not creds.access_token:
         return aiohttp.web.Response(
