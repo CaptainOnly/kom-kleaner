@@ -37,9 +37,15 @@ def save_credentials():
              "expires_at": getattr(creds, "expires_at", None)}, f, indent=4)
 
 
+def activities_sort(k):
+    if isinstance(k, str):
+        return (0, k)
+    return (1, -k)
+
+
 def save_activities():
     with open(activities_file, "w") as f:
-        json.dump(activities, f, indent=4)
+        json.dump({k: activities[k] for k in sorted(activities, key=activities_sort)}, f, indent=4)
 
 
 def latlng_to_map_link(latlng, label="View on map"):
@@ -191,7 +197,13 @@ async def activities_fetch(refresh=False):
 
         # Fetch details for activities using ETag to avoid refreshing up to date data
 
-        for aid, activity in activities.items():
+        for key in sorted(activities, key=activities_sort):
+
+            if key == "ETag":
+                continue
+
+            aid = key
+            activity = activities[key]
 
             if refresh or "details" not in activity:
 
@@ -395,12 +407,17 @@ async def main_handler(request):
     else:
         await resp.write("<p>Updating...</p>".encode("utf-8"))
 
-    for k,a in activities.items():
+    for key in sorted(activities, key=activities_sort):
 
-        if k == "ETag":
+        if key == "ETag":
             continue
 
-        device_name = a['details'].get('device_name', "Missing") if 'details' in a else "Unknown"
+        a = activities[key]
+
+        if 'details' in a:
+            device_name = a['details'].get('device_name', "Missing")
+        else:
+            device_name = "Unknown"
 
         await resp.write(f"""
         <p><a href=\"https://www.strava.com/activities/{a['id']}\">{a['start_date']}</a>
