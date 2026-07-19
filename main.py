@@ -127,17 +127,25 @@ async def activities_fetch(refresh=False):
             if "ETag" in activities:
                 headers["If-None-Match"] = activities["ETag"]
 
-            response = await client.get(
-                ATHLETE_URL + "/activities",
-                params={"per_page": per_page, "page": page},
-                headers=headers)
+            try:
+                response = await client.get(
+                    ATHLETE_URL + "/activities",
+                    params={"per_page": per_page, "page": page},
+                    headers=headers)
+                error = None
+            except httpx.ReadError as e:
+                response = None
+                error = e
 
-            if response.status_code == httpx.codes.not_modified:
+            if error:
+                print("Read Error. Retry in a second.")
+                await asyncio.sleep(1)
+
+            elif response.status_code == httpx.codes.not_modified:
                 print("No new activities.")
                 break
 
             elif response.status_code == httpx.codes.ok:
-
                 items = response.json()
 
                 if not items:
@@ -175,7 +183,6 @@ async def activities_fetch(refresh=False):
                 page += 1
 
             elif httpx.codes.too_many_requests:
-
                 activities_done = "Limited"
 
                 save_activities()
@@ -214,11 +221,20 @@ async def activities_fetch(refresh=False):
                 if "ETag" in activity:
                     headers["If-None-Match"] = activity["ETag"]
 
-                response = await client.get(
-                    f"{ACTIVITIES_URL}/{aid}",
-                    headers=headers)
+                try:
+                    response = await client.get(
+                        f"{ACTIVITIES_URL}/{aid}",
+                        headers=headers)
+                    error = None
+                except httpx.ReadError as e:
+                    response = None
+                    error = e
 
-                if response.status_code == httpx.codes.not_modified:
+                if error:
+                    print("Read Error. Retry in a second.")
+                    await asyncio.sleep(1)
+
+                elif response.status_code == httpx.codes.not_modified:
                     pass
 
                 elif response.status_code == httpx.codes.ok:
