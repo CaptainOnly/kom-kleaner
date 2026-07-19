@@ -506,6 +506,29 @@ if __name__ == "__main__":
             except json.decoder.JSONDecodeError:
                 raise RuntimeError("Activities file is corrupt")
 
+    # Report some stats about activities
+
+    count = 0
+    missing = []
+
+    for key in sorted(activities, key=activities_sort):
+
+        if key == "ETag":
+            continue
+
+        aid = key
+        activity = activities[key]
+
+        count += 1
+
+        if "details" not in activity:
+            missing.append(aid)
+
+    print(f"{count} activities in cache")
+    print(f"{len(missing)} are missing details")
+    if len(missing) > 0:
+        print("\n".join(str(_) for _ in missing))
+
     # Create the web app
 
     app = aiohttp.web.Application()
