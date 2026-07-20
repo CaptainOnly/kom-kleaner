@@ -3,13 +3,14 @@
 import aiohttp.web
 import argparse
 import asyncio
-import datetime
 import httpx
 import json
 import os
 import secrets
 import time
 import types
+
+from rate_limit_check import rate_limit_check
 
 OAUTH_URL = "https://www.strava.com/oauth/authorize"
 TOKEN_URL = "https://www.strava.com/api/v3/oauth/token"
@@ -64,44 +65,12 @@ def latlng_to_map_link(latlng, label="View on map"):
 
 async def wait_for_rate_limit(limit, usage):
 
-    limit = limit.split(',')
-    usage = usage.split(',')
+    seconds, message = rate_limit_check(limit, usage)
 
-    if usage[0] == limit[0]:
-
-        print("15 minute rate limit hit")
-
-        def next_15(now):
-            if now.minute < 15:
-                return now.replace(minute=15, second=1)
-            if now.minute < 30:
-                return now.replace(minute=30, second=1)
-            if now.minute < 45:
-                return now.replace(minute=45, second=1)
-            if now.hour < 23:
-                return now.replace(hour=now.hour + 1, minute=0, second=1)
-            return now.replace(day=now.day + 1, hour=0, minute=0, second=1)
-
-        now = datetime.datetime.now()
-        remaining = next_15(now).timestamp() - now.timestamp()
-
-        print(f"Resume in {remaining} seconds")
-
-        await asyncio.sleep(remaining)
-
-    if usage[1] == limit[1]:
-
-        print("Daily rate limit hit")
-
-        def next_day(now):
-            return (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=1)
-
-        now = datetime.datetime.now(datetime.UTC)
-        remaining = next_day(now).timestamp() - now.timestamp()
-
-        print(f"Resume in {remaining} seconds")
-
-        await asyncio.sleep(remaining)
+    if seconds:
+        print(message)
+        print(f"Resume in {seconds} seconds")
+        await asyncio.sleep(seconds)
 
 
 async def activities_fetch(refresh=False):
